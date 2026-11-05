@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CrateCycle — deposit-return circulation on BOT Chain</title>
+<meta name="description" content="A deposit rides with a reusable crate instead of bouncing back to the depot. Hand it on and your deposit is released as the next holder's goes in." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Martian+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js"></script>
+<style>
+  :root{
+    --ink:#1d1a16; --ink-2:#554e45; --ink-3:#8c8378;
+    --yard:#e9e2d4; --yard-2:#ddd4c2; --slab:#fffdf8;
+    --timber:#e8b96a; --cobalt:#6fa8dc; --amber:#f5d547; --stone:#b8b4ae; --ember:#e8736a;
+    --green:#2f7a4f; --rust:#b2452c;
+    --lift:5px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:"Bricolage Grotesque",system-ui,-apple-system,sans-serif;
+    font-size:15px;line-height:1.5;color:var(--ink);background:var(--yard);
+    -webkit-font-smoothing:antialiased;min-height:100vh;
+  }
+  .mono{font-family:"Martian Mono",ui-monospace,SFMono-Regular,monospace;font-size:.92em;letter-spacing:-.04em}
+  /* the yard floor, faintly ruled on the isometric diagonal */
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+    background-image:
+      repeating-linear-gradient(26.57deg,transparent 0 39px,var(--yard-2) 39px 40px),
+      repeating-linear-gradient(-26.57deg,transparent 0 39px,var(--yard-2) 39px 40px)}
+
+  .yard{position:relative;z-index:1;max-width:1340px;margin:0 auto;padding:24px 20px 44px}
+
+  /* ---------- chunky slab: hard offset shadow, no blur ---------- */
+  .slab{background:var(--slab);border:2px solid var(--ink);border-radius:5px;
+    box-shadow:var(--lift) var(--lift) 0 var(--ink)}
+
+  /* ---------- header ---------- */
+  .top{display:flex;align-items:center;gap:15px;flex-wrap:wrap;padding:15px 20px;margin-bottom:18px}
+  .cube{width:44px;height:44px;flex:0 0 auto}
+  .cube svg{width:44px;height:44px;display:block}
+  h1{margin:0;font-size:25px;font-weight:800;letter-spacing:-.035em}
+  .lede{font-size:13.5px;color:var(--ink-2);margin-top:-2px}
+  .top .right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .stamp{display:inline-flex;align-items:center;gap:7px;border:2px solid var(--ink);border-radius:3px;
+    padding:6px 12px;font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;background:var(--slab)}
+  .stamp i{width:8px;height:8px;background:var(--green);display:block;border-radius:1px}
+
+  button{font-family:inherit;cursor:pointer;transition:transform .1s, box-shadow .1s;font-weight:600}
+  button:disabled{opacity:.42;cursor:not-allowed}
+  .k{border:2px solid var(--ink);border-radius:4px;background:var(--slab);color:var(--ink);
+    padding:9px 16px;font-size:14px;box-shadow:3px 3px 0 var(--ink)}
+  .k:hover:not(:disabled){transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)}
+  .k:active:not(:disabled){transform:translate(3px,3px);box-shadow:0 0 0 var(--ink)}
+  .k.go{background:var(--cobalt)} .k.ok{background:var(--green);color:#fff}
+  .k.warn{background:var(--amber)} .k.bad{background:var(--ember)}
+  .k.sm{padding:7px 13px;font-size:13px;box-shadow:2px 2px 0 var(--ink)}
+  .acts{display:flex;gap:9px;flex-wrap:wrap}
+
+  /* ---------- fleet tabs ---------- */
+  .tabs{display:flex;gap:0;overflow-x:auto;margin-bottom:-2px;padding-left:4px}
+  .tab{flex:0 0 auto;border:2px solid var(--ink);border-bottom:2px solid var(--ink);
+    border-radius:5px 5px 0 0;background:var(--yard-2);color:var(--ink-2);
+    padding:10px 18px;font-size:14px;font-weight:600;margin-right:-2px;white-space:nowrap;position:relative}
+  .tab.on{background:var(--slab);color:var(--ink);border-bottom-color:var(--slab);z-index:2}
+  .tab:hover:not(.on){background:#e4dccb}
+
+  /* ---------- main split ---------- */
+  .split{display:grid;grid-template-columns:minmax(0,1fr) 352px;gap:16px;align-items:start}
+  @media(max-width:1000px){.split{grid-template-columns:1fr}}
+
+  .yardbox{padding:0;overflow:hidden}
+  .yardhead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;
+    padding:18px 20px;border-bottom:2px solid var(--ink);background:var(--yard-2)}
+  .fname{font-size:19px;font-weight:800;letter-spacing:-.03em}
+  .fmeta{font-size:13px;color:var(--ink-2);margin-top:2px}
+  .counts{display:flex;gap:18px;flex-wrap:wrap}
+  .cn{text-align:right}
+  .cnv{font-size:20px;font-weight:800;letter-spacing:-.03em;line-height:1.1}
+  .cnk{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+
+  .stage{position:relative;background:
+    radial-gradient(ellipse 70% 55% at 50% 42%,#f6f1e6,var(--slab) 72%)}
+  svg.iso{width:100%;display:block;cursor:default}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;padding:12px 20px;border-top:2px dashed var(--yard-2);
+    font-size:11.5px;color:var(--ink-2)}
+  .lg{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:13px;height:13px;border:1.5px solid var(--ink);border-radius:2px;display:block}
+
+  /* ---------- side panel ---------- */
+  .side{display:flex;flex-direction:column;gap:16px}
+  .pad{padding:18px 20px}
+  .ptitle{font-size:11px;font-weight:600;letter-spacing:.17em;text-transform:uppercase;color:var(--ink-3);margin-bottom:13px}
+  .seltag{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+    padding:3px 9px;border:2px solid var(--ink);border-radius:3px;margin-bottom:10px}
+  .crateno{font-size:30px;font-weight:800;letter-spacing:-.045em;line-height:1}
+  .crateno small{font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--ink-3);margin-left:6px}
+
+  .rows{margin:14px 0}
+  .r{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:8px 0;
+    border-bottom:1px dashed var(--yard-2);font-size:13.5px}
+  .r:last-child{border-bottom:0}
+  .r span{color:var(--ink-3)}
+  .r b{font-weight:600}
+
+  /* two-bar circulation clock */
+  .clock{margin:14px 0 4px}
+  .ck{font-size:10.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+    display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}
+  .bar{height:14px;border:2px solid var(--ink);border-radius:3px;background:var(--yard-2);overflow:hidden;margin-bottom:11px}
+  .bar i{display:block;height:100%;background:var(--cobalt)}
+  .bar.hard i{background:var(--amber)}
+  .bar.late i{background:var(--ember)}
+
+  .f{margin-bottom:11px}
+  .f label{display:block;font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ink-3);margin-bottom:5px}
+  .f input,.f select{width:100%;font-family:inherit;font-size:14.5px;color:var(--ink);background:var(--slab);
+    border:2px solid var(--ink);border-radius:4px;padding:9px 11px;outline:none}
+  .f input:focus,.f select:focus{box-shadow:2px 2px 0 var(--ink)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .hint{font-size:12px;color:var(--ink-3);margin-top:5px;line-height:1.45}
+  .rule{height:2px;background:var(--ink);opacity:.14;margin:16px 0}
+  .empty{font-size:13.5px;color:var(--ink-3)}
+
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:70;max-width:min(560px,92vw);
+    padding:12px 18px;border:2px solid var(--ink);border-radius:4px;font-size:14px;font-weight:600;
+    display:none;box-shadow:4px 4px 0 var(--ink)}
+  .toast.on{display:block}
+  .toast.good{background:var(--green);color:#fff}
+  .toast.err{background:var(--ember)}
+
+  /* ---------- BOT Chain ecosystem footer ---------- */
+  footer.bc-foot{
+    display:block;text-align:left;text-transform:none;margin:16px 0 0;padding:18px 20px;
+    background:var(--slab);border:2px solid var(--ink);border-radius:5px;
+    box-shadow:var(--lift) var(--lift) 0 var(--ink);color:var(--ink-2);font-size:13.5px;
+  }
+  .bc-foot-grid{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
+  .bc-logo{flex:0 0 auto;width:38px;height:38px;border:2px solid var(--ink);border-radius:4px;
+    display:grid;place-items:center;background:#e4f4ee}
+  .bc-id{font-size:15px;font-weight:800;letter-spacing:-.025em;color:var(--ink);line-height:1.2}
+  .bc-id small{display:block;font-size:12px;font-weight:400;letter-spacing:0;color:var(--ink-3)}
+  .bc-links{margin-left:auto;display:flex;gap:9px;flex-wrap:wrap}
+  .bc-links a{text-decoration:none;font-size:13px;font-weight:600;color:var(--ink);padding:7px 14px;
+    border:2px solid var(--ink);border-radius:4px;background:var(--slab);box-shadow:2px 2px 0 var(--ink);
+    transition:transform .1s, box-shadow .1s}
+  .bc-links a:hover{transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--ink);background:#e4f4ee}
+  .bc-meta{margin-top:14px;padding-top:12px;border-top:2px dashed var(--yard-2);font-size:12px;color:var(--ink-3)}
+  .bc-meta b{font-weight:700;color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="yard">
+
+  <!-- ================= header ================= -->
+  <div class="slab top">
+    <div class="cube">
+      <svg viewBox="0 0 44 44">
+        <polygon points="22,6 38,15 22,24 6,15" fill="#e8b96a" stroke="#1d1a16" stroke-width="2" stroke-linejoin="round"/>
+        <polygon points="6,15 22,24 22,38 6,29" fill="#c4934a" stroke="#1d1a16" stroke-width="2" stroke-linejoin="round"/>
+        <polygon points="38,15 22,24 22,38 38,29" fill="#d4a55a" stroke="#1d1a16" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div>
+      <h1>CrateCycle</h1>
+      <div class="lede">The deposit rides with the crate, not back to the depot.</div>
+    </div>
+    <div class="right">
+      <span class="stamp"><i></i><span id="b-net">TESTNET</span></span>
+      <button class="k go" id="btn-connect">Connect</button>
+      <span class="mono" id="acct" style="font-size:12.5px;color:var(--ink-3)"></span>
+      <button class="k sm" id="btn-cash">Withdraw <span id="cash">—</span></button>
+    </div>
+  </div>
+
+  <!-- ================= fleet tabs ================= -->
+  <div class="tabs" id="tabs"></div>
+
+  <!-- ================= yard + side ================= -->
+  <div class="split">
+
+    <div class="slab yardbox">
+      <div class="yardhead">
+        <div>
+          <div class="fname" id="f-name">—</div>
+          <div class="fmeta" id="f-meta">Loading fleets…</div>
+        </div>
+        <div class="counts">
+          <div class="cn"><div class="cnv mono" id="f-total">—</div><div class="cnk">crates</div></div>
+          <div class="cn"><div class="cnv mono" id="f-out">—</div><div class="cnk">in circulation</div></div>
+          <div class="cn"><div class="cnv mono" id="f-dep">—</div><div class="cnk">deposit</div></div>
+          <div class="cn"><div class="cnv mono" id="f-use">—</div><div class="cnk">usage fee</div></div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <svg class="iso" id="iso" viewBox="0 0 900 520" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+
+      <div class="legend">
+        <span class="lg"><i class="sw" style="background:var(--timber)"></i>at depot</span>
+        <span class="lg"><i class="sw" style="background:var(--cobalt)"></i>out with a holder</span>
+        <span class="lg"><i class="sw" style="background:var(--amber)"></i>returned, awaiting the operator</span>
+        <span class="lg"><i class="sw" style="background:var(--stone)"></i>retired</span>
+        <span class="lg"><i class="sw" style="background:var(--ember)"></i>lost</span>
+        <span class="lg" style="margin-left:auto">▲ overdue</span>
+      </div>
+    </div>
+
+    <!-- ================= side panel ================= -->
+    <div class="side">
+
+      <div class="slab pad" id="detail">
+        <div class="ptitle">Crate</div>
+        <div class="empty">Click a crate in the yard.</div>
+      </div>
+
+      <div class="slab pad">
+        <div class="ptitle">Operator console</div>
+        <div id="opzone"><div class="empty">You do not run this fleet.</div></div>
+
+        <div class="rule"></div>
+
+        <div class="ptitle">Open a fleet</div>
+        <div class="f"><label>Name</label><input id="o-name" maxlength="64" placeholder="Returnable produce crates, depot 2" /></div>
+        <div class="row2">
+          <div class="f"><label>Deposit (BOT)</label><input class="mono" id="o-dep" value="2" /></div>
+          <div class="f"><label>Usage fee (BOT)</label><input class="mono" id="o-use" value="0.2" />
+            <div class="hint">Never above the deposit.</div></div>
+        </div>
+        <div class="row2">
+          <div class="f"><label>Holder window</label>
+            <select id="o-win">
+              <option value="86400">1 day</option>
+              <option value="604800" selected>7 days</option>
+              <option value="2592000">30 days</option>
+            </select>
+            <div class="hint">A whole trip may span three of these.</div></div>
+          <div class="f"><label>Cycles per crate</label><input class="mono" id="o-cyc" value="20" />
+            <div class="hint">Retires itself after this many.</div></div>
+        </div>
+        <div class="acts"><button class="k go" id="btn-openfleet">Open the fleet</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== BOT CHAIN ECOSYSTEM FOOTER ====================== -->
+  <footer class="bc-foot">
+    <div class="bc-foot-grid">
+      <div class="bc-logo" aria-hidden="true"><svg viewBox="0 0 63.63 100" xmlns="http://www.w3.org/2000/svg" style="width:14px;height:22px;display:block"><path fill="#00A67E" d="M31.67 99.95 L0 82.48 L0.11 63.74 L47.01 90.60 L47.01 73.19 L15.98 55.32 L15.95 36.49 L46.92 53.57 L47.39 36.82 L15.96 17.81 L16.26 0 L63.06 27.02 L62.82 46.20 L47.86 54.67 L62.85 63.00 L63.62 81.42 Z"/></svg></div>
+      <div class="bc-id">BOT Chain<small>Part of the ecosystem</small></div>
+      <div class="bc-links">
+        <a href="https://botchain.ai" target="_blank" rel="noopener noreferrer">botchain.ai</a>
+        <a id="bc-explorer" href="https://scan.botchain.ai" target="_blank" rel="noopener noreferrer">Explorer</a>
+      </div>
+    </div>
+    <div class="bc-meta">
+      <span>&copy; 2026 <b>BOT Chain</b> &mdash; EVM-compatible Layer 1</span>
+    </div>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+   TESTNET -> MAINNET: swap these five values together, never some of them.
+     CONTRACT_ADDRESS  -> the mainnet address
+     chainId           -> "0x2A5"
+     chainName         -> "BOT Chain"
+     rpcUrls           -> ["https://rpc.botchain.ai"]
+     blockExplorerUrls -> ["https://scan.botchain.ai"]
+   ...and set label -> "MAINNET" so the badge reads correctly.
+   ========================================================================== */
+const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+const NETWORK = {
+  chainId: "0x3C8",                              // 968 testnet  | mainnet: "0x2A5"
+  chainIdDec: 968,                               // reference only, not shown on the page | mainnet: 677
+  chainName: "BOT Chain Testnet",                //              | mainnet: "BOT Chain"
+  rpcUrls: ["https://rpc.bohr.life"],            //              | mainnet: ["https://rpc.botchain.ai"]
+  blockExplorerUrls: ["https://scan.bohr.life"], //              | mainnet: ["https://scan.botchain.ai"]
+  nativeCurrency: { name: "BOT", symbol: "BOT", decimals: 18 },
+  label: "TESTNET"                               //              | mainnet: "MAINNET"
+};
+
+const ABI = [
+  "function openFleet(string name, uint256 deposit, uint256 usageFee, uint64 outWindow, uint32 maxCycles) returns (uint256)",
+  "function addCrates(uint256 fleetId, uint32 count) returns (uint256)",
+  "function closeFleet(uint256 fleetId)",
+  "function checkout(uint256 crateId) payable",
+  "function offer(uint256 crateId, address to)",
+  "function cancelOffer(uint256 crateId)",
+  "function takeOver(uint256 crateId) payable",
+  "function returnCrate(uint256 crateId)",
+  "function acceptReturn(uint256 crateId)",
+  "function forceReturn(uint256 crateId)",
+  "function writeOff(uint256 crateId)",
+  "function declareLost(uint256 crateId)",
+  "function withdraw()",
+  "function fleetCount() view returns (uint256)",
+  "function crateCount() view returns (uint256)",
+  "function getFleet(uint256 fleetId) view returns (tuple(address operator,uint256 deposit,uint256 usageFee,uint64 outWindow,uint32 maxCycles,uint32 crateCount,uint32 outCount,bool open,string name))",
+  "function getCrate(uint256 crateId) view returns (tuple(uint32 fleetId,address holder,address offeredTo,uint32 cycles,uint64 dueAt,uint64 hardDueAt,uint8 state))",
+  "function balanceOf(address who) view returns (uint256)",
+  "function getFleetsByOperator(address who) view returns (uint256[])",
+  "function getCratesByFleet(uint256 fleetId, uint32 from, uint32 limit) view returns (uint256[])",
+  "function availableCrates(uint256 fleetId, uint32 from, uint32 limit) view returns (uint256[])",
+  "function isOverdue(uint256 crateId) view returns (bool)",
+  "function timeLeft(uint256 crateId) view returns (uint64 holderWindow, uint64 circulation)",
+  "function returnForceable(uint256 crateId) view returns (bool)",
+  "function quoteCheckout(uint256 fleetId) view returns (uint256 deposit, uint256 usageFee, uint256 total)",
+  "function quoteUsageFee(uint256 fleetId) view returns (uint256 toOperator, uint256 protocolFee)",
+  "function getRecent(uint256 limit) view returns (uint256[])",
+  "function protocolFeeBps() view returns (uint16)",
+  "function lockedTotal() view returns (uint256)",
+  "function CIRCULATION_LIMIT() view returns (uint64)"
+];
+
+const ZERO = "0x0000000000000000000000000000000000000000";
+const AT_DEPOT = 0, OUT = 1, RETURN_PENDING = 2, RETIRED = 3, LOST = 4;
+const STATE_NAME = ["at depot", "out", "returned", "retired", "lost"];
+
+/* face colours per state: [top, left, right] */
+const SKIN = {
+  0: ["#e8b96a", "#c4934a", "#d4a55a"],
+  1: ["#6fa8dc", "#3d6f9e", "#5490c4"],
+  2: ["#f5d547", "#c7a516", "#dfbf2e"],
+  3: ["#b8b4ae", "#8b8782", "#a09c96"],
+  4: ["#e8736a", "#b04a42", "#cc5d54"]
+};
+
+let provider, signer, contract, readContract, account = null;
+let fleetIds = [], fid = null, fleet = null;
+let crates = [], picked = null, circLimit = 3n;
+
+const $ = (id) => document.getElementById(id);
+const E = (wei, dp = 4) => {
+  const n = Number(ethers.formatEther(wei));
+  if (n === 0) return "0";
+  if (n < 0.0001) return "<0.0001";
+  return n.toLocaleString(undefined, { maximumFractionDigits: dp });
+};
+const short = (a) => a.slice(0, 6) + "…" + a.slice(-4);
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+function dur(secs) {
+  const s = Number(secs);
+  if (s <= 0) return "up";
+  if (s < 3600) return Math.ceil(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+let tt;
+function say(msg, kind = "good") {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast on " + kind;
+  clearTimeout(tt);
+  tt = setTimeout(() => (t.className = "toast"), 5200);
+}
+const err = (e) => say(typeof e === "string" ? e : (e?.reason || e?.shortMessage || e?.message || "transaction failed"), "err");
+
+/* ------------------------------------------------------------ chain wiring */
+$("b-net").textContent = NETWORK.label;
+
+function readOnly() {
+  if (CONTRACT_ADDRESS === ZERO) return;
+  try {
+    const p = new ethers.JsonRpcProvider(NETWORK.rpcUrls[0]);
+    readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, p);
+  } catch (e) { /* read-only view simply stays empty */ }
+}
+
+async function connect() {
+  if (!window.ethereum) return err("no wallet found in this browser");
+  try {
+    walletBusy = true;
+    setTimeout(function () { walletBusy = false; }, 8000);
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    await ensureChain();
+    walletBusy = false;
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    $("acct").textContent = short(account);
+    $("btn-connect").textContent = "Connected";
+    say("wallet connected");
+    await refresh();
+  } catch (e) { err(e); }
+}
+
+async function ensureChain() {
+  const cur = await window.ethereum.request({ method: "eth_chainId" });
+  if (cur.toLowerCase() === NETWORK.chainId.toLowerCase()) return;
+  try {
+    await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: NETWORK.chainId }] });
+  } catch (e) {
+    if (e.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: NETWORK.chainId, chainName: NETWORK.chainName, rpcUrls: NETWORK.rpcUrls,
+          blockExplorerUrls: NETWORK.blockExplorerUrls, nativeCurrency: NETWORK.nativeCurrency
+        }]
+      });
+    } else throw e;
+  }
+}
+
+const reader = () => contract || readContract;
+
+/* ---------------------------------------------------------------- reading */
+async function refresh() {
+  const c = reader();
+  if (!c || CONTRACT_ADDRESS === ZERO) {
+    $("f-meta").textContent = "No contract set. Paste the deployed address into CONTRACT_ADDRESS in this file.";
+    emptyStage("Nothing to show until this page points at a deployed contract.");
+    return;
+  }
+  try {
+    circLimit = await c.CIRCULATION_LIMIT();
+    if (account) {
+      const bal = await c.balanceOf(account);
+      $("cash").textContent = E(bal, 4);
+      $("btn-cash").disabled = bal === 0n;
+    } else {
+      $("cash").textContent = "—";
+      $("btn-cash").disabled = true;
+    }
+
+    const n = Number(await c.fleetCount());
+    if (n === 0) {
+      $("tabs").innerHTML = "";
+      $("f-meta").textContent = "No fleets yet. Open the first one.";
+      emptyStage("No fleets yet. Open one from the console on the right.");
+      return;
+    }
+    fleetIds = (await c.getRecent(24)).map(Number);
+    if (fid === null || !fleetIds.includes(fid)) { fid = fleetIds[0]; picked = null; }
+    await drawTabs();
+    await loadYard();
+    await drawOps();
+    await drawDetail();
+  } catch (e) { err(e); }
+}
+
+async function drawTabs() {
+  const c = reader(), box = $("tabs");
+  box.innerHTML = "";
+  for (const id of fleetIds) {
+    let f;
+    try { f = await c.getFleet(id); } catch { continue; }
+    const b = document.createElement("button");
+    b.className = "tab" + (id === fid ? " on" : "");
+    b.textContent = f.name + (f.open ? "" : " · closed");
+    b.onclick = () => { fid = id; picked = null; refresh(); };
+    box.appendChild(b);
+  }
+}
+
+async function loadYard() {
+  const c = reader();
+  fleet = await c.getFleet(fid);
+  const q = await c.quoteCheckout(fid);
+
+  $("f-name").textContent = fleet.name;
+  $("f-meta").textContent =
+    `Run by ${account && fleet.operator.toLowerCase() === account.toLowerCase() ? "you" : short(fleet.operator)}` +
+    ` · ${fleet.open ? "taking checkouts" : "closed to new checkouts"}` +
+    ` · holder window ${dur(fleet.outWindow)}, trip capped at ${circLimit} of those` +
+    ` · ${fleet.maxCycles} cycles per crate`;
+  $("f-total").textContent = String(fleet.crateCount);
+  $("f-out").textContent = String(fleet.outCount);
+  $("f-dep").textContent = E(fleet.deposit, 3);
+  $("f-use").textContent = E(fleet.usageFee, 3);
+
+  const ids = (await c.getCratesByFleet(fid, 0, 72)).map(Number);
+  crates = [];
+  for (const id of ids) {
+    try {
+      const cr = await c.getCrate(id);
+      const st = Number(cr.state);
+      const over = st === OUT ? await c.isOverdue(id) : false;
+      crates.push({ id, cr, st, over });
+    } catch { /* skip a crate that cannot be read */ }
+  }
+  drawIso();
+}
+
+/* ------------------------------- the isometric yard, drawn as SVG cubes -- */
+/** Keep the stage from collapsing to a blank slab when there is nothing to draw. */
+function emptyStage(msg) {
+  const svg = $("iso");
+  svg.setAttribute("viewBox", "0 0 900 220");
+  svg.style.maxHeight = "220px";
+  svg.innerHTML = `
+    <g opacity=".3">
+      <polygon points="450,72 486,90 450,108 414,90" fill="#e8b96a" stroke="#1d1a16" stroke-width="2" stroke-linejoin="round"/>
+      <polygon points="414,90 450,108 450,140 414,122" fill="#c4934a" stroke="#1d1a16" stroke-width="2" stroke-linejoin="round"/>
+      <polygon points="486,90 450,108 450,140 486,122" fill="#d4a55a" stroke="#1d1a16" stroke-width="2" stroke-linejoin="round"/>
+    </g>
+    <text x="450" y="178" text-anchor="middle" font-family="Bricolage Grotesque,system-ui,sans-serif"
+      font-size="15" fill="#8c8378">${esc(msg)}</text>`;
+}
+
+function drawIso() {
+  const svg = $("iso");
+  const n = crates.length;
+  if (!n) {
+    emptyStage("No crates in this fleet yet. The operator adds them from the console.");
+    return;
+  }
+
+  const W = 34, H = 17, CH = 26;          // half-tile width, half-height, cube height
+  const cols = Math.min(9, Math.ceil(Math.sqrt(n)));
+  const rows = Math.ceil(n / cols);
+
+  /* work out the extent so the viewBox hugs the yard */
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    pts.push([(col - row) * W, (col + row) * H]);
+  }
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const padX = W * 2.2, padY = CH + H * 3.4;
+  const minX = Math.min(...xs) - padX, maxX = Math.max(...xs) + padX;
+  const minY = Math.min(...ys) - padY, maxY = Math.max(...ys) + padY;
+  const vbW = maxX - minX, vbH = maxY - minY;
+  svg.setAttribute("viewBox", `${minX} ${minY} ${vbW} ${vbH}`);
+  svg.style.maxHeight = Math.max(260, Math.min(560, vbH * 1.05)) + "px";
+
+  /* floor tiles first, then cubes back-to-front so the near ones overlap */
+  let floor = "", body = "";
+  const order = crates
+    .map((c, i) => ({ c, i, col: i % cols, row: Math.floor(i / cols) }))
+    .sort((a, b) => (a.col + a.row) - (b.col + b.row));
+
+  for (const { col, row } of order) {
+    const x = (col - row) * W, y = (col + row) * H;
+    floor += `<polygon points="${x},${y} ${x + W},${y + H} ${x},${y + 2 * H} ${x - W},${y + H}"
+      fill="#efe8da" stroke="#ddd4c2" stroke-width="1"/>`;
+  }
+
+  for (const { c, i, col, row } of order) {
+    const x = (col - row) * W, y = (col + row) * H;
+    const [top, left, right] = SKIN[c.st] || SKIN[3];
+    const on = picked === c.id;
+    const sw = on ? 3 : 1.6;
+    const ty = y - CH;
+
+    body += `<g class="crate" data-id="${c.id}" style="cursor:pointer">
+      <polygon points="${x},${ty} ${x + W},${ty + H} ${x},${ty + 2 * H} ${x - W},${ty + H}"
+        fill="${top}" stroke="#1d1a16" stroke-width="${sw}" stroke-linejoin="round"/>
+      <polygon points="${x - W},${ty + H} ${x},${ty + 2 * H} ${x},${y + 2 * H} ${x - W},${y + H}"
+        fill="${left}" stroke="#1d1a16" stroke-width="${sw}" stroke-linejoin="round"/>
+      <polygon points="${x + W},${ty + H} ${x},${ty + 2 * H} ${x},${y + 2 * H} ${x + W},${y + H}"
+        fill="${right}" stroke="#1d1a16" stroke-width="${sw}" stroke-linejoin="round"/>
+      <text x="${x}" y="${ty + H + 5}" text-anchor="middle"
+        font-family="Martian Mono,monospace" font-size="10" fill="#1d1a16" opacity=".72"
+        style="pointer-events:none">${c.id}</text>
+      ${c.over ? `<polygon points="${x},${ty - 13} ${x + 7},${ty - 2} ${x - 7},${ty - 2}"
+        fill="#e8736a" stroke="#1d1a16" stroke-width="1.6" stroke-linejoin="round" style="pointer-events:none"/>` : ""}
+      ${on ? `<polygon points="${x},${ty - 24} ${x + 6},${ty - 15} ${x - 6},${ty - 15}"
+        fill="#1d1a16" style="pointer-events:none"/>` : ""}
+    </g>`;
+  }
+
+  svg.innerHTML = floor + body;
+  svg.querySelectorAll(".crate").forEach((g) => {
+    g.addEventListener("click", () => {
+      picked = Number(g.dataset.id);
+      drawIso();
+      drawDetail().catch(() => {});
+    });
+  });
+}
+
+/* ------------------------------------------------------- the side panel -- */
+async function drawDetail() {
+  const c = reader(), box = $("detail");
+  if (picked === null) {
+    box.innerHTML = '<div class="ptitle">Crate</div><div class="empty">Click a crate in the yard.</div>';
+    return;
+  }
+  const row = crates.find((r) => r.id === picked);
+  if (!row) {
+    box.innerHTML = '<div class="ptitle">Crate</div><div class="empty">That crate is no longer in this fleet.</div>';
+    return;
+  }
+  const { cr, st, over } = row;
+  const mine = account && cr.holder.toLowerCase() === account.toLowerCase();
+  const offeredToMe = account && cr.offeredTo.toLowerCase() === account.toLowerCase();
+  const isOp = account && fleet.operator.toLowerCase() === account.toLowerCase();
+  const q = await c.quoteCheckout(fid);
+  const worn = Number(cr.cycles) >= Number(fleet.maxCycles);
+
+  const tagColour =
+    st === AT_DEPOT ? "var(--timber)" : st === OUT ? "var(--cobalt)" :
+    st === RETURN_PENDING ? "var(--amber)" : st === RETIRED ? "var(--stone)" : "var(--ember)";
+
+  box.innerHTML = `
+    <div class="ptitle">Crate</div>
+    <span class="seltag" style="background:${tagColour}">${STATE_NAME[st]}${over ? " · overdue" : ""}</span>
+    <div class="crateno mono">#${picked}<small>${esc(fleet.name)}</small></div>
+    <div class="rows">
+      <div class="r"><span>Holder</span><b>${cr.holder === ZERO ? "— at depot —" : mine ? "you" : short(cr.holder)}</b></div>
+      <div class="r"><span>Cycles used</span><b class="mono">${cr.cycles} / ${fleet.maxCycles}</b></div>
+      <div class="r"><span>Deposit behind it</span><b class="mono">${E(fleet.deposit, 4)} BOT</b></div>
+      ${cr.offeredTo !== ZERO ? `<div class="r"><span>Offered to</span><b>${offeredToMe ? "you" : short(cr.offeredTo)}</b></div>` : ""}
+    </div>
+    <div id="clockzone"></div>
+    <div id="crateacts"></div>`;
+
+  /* the two clocks, only meaningful while the crate is out */
+  if (st === OUT) {
+    const tl = await c.timeLeft(picked);
+    const hw = Number(tl.holderWindow), ci = Number(tl.circulation);
+    const hwMax = Number(fleet.outWindow);
+    const ciMax = hwMax * Number(circLimit);
+    $("clockzone").innerHTML = `
+      <div class="clock">
+        <div class="ck"><span>this holder's window</span><span class="mono">${dur(hw)}</span></div>
+        <div class="bar ${hw === 0 ? "late" : ""}"><i style="width:${Math.min(100, (hw / hwMax) * 100).toFixed(1)}%"></i></div>
+        <div class="ck"><span>whole trip left</span><span class="mono">${dur(ci)}</span></div>
+        <div class="bar hard"><i style="width:${Math.min(100, (ci / ciMax) * 100).toFixed(1)}%"></i></div>
+      </div>
+      <div class="hint">Handing it on gives the next holder a fresh window, but never one that runs past the trip cap.</div>`;
+  }
+
+  /* actions, chosen by state and by who is asking */
+  const z = $("crateacts");
+  z.innerHTML = "";
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  acts.style.marginTop = "14px";
+  const mk = (label, cls, fn, on = true) => {
+    const b = document.createElement("button");
+    b.className = "k " + cls;
+    b.textContent = label;
+    b.disabled = !account || !on;
+    b.onclick = fn;
+    acts.appendChild(b);
+  };
+
+  if (st === AT_DEPOT) {
+    mk(`Take it out — ${E(q.total, 4)} BOT`, "go",
+      () => tx(() => contract.checkout(picked, { value: q.total }), "crate checked out"),
+      fleet.open && !isOp && !worn);
+    const why = worn ? "This crate has used all its cycles, so it cannot go out again."
+      : isOp ? "You run this fleet, so you cannot check its crates out yourself."
+      : !fleet.open ? "This fleet is closed to new checkouts."
+      : `${E(q.deposit, 4)} deposit plus a ${E(q.usageFee, 4)} usage fee. The deposit comes back when the crate does.`;
+    z.innerHTML = `<div class="hint">${why}</div>`;
+  } else if (st === OUT) {
+    if (mine) {
+      z.innerHTML = `
+        <div class="f" style="margin-top:14px"><label>Offer it on to</label><input id="to" placeholder="0x…" /></div>`;
+      mk("Offer it", "sm", () => {
+        const to = $("to").value.trim();
+        if (!ethers.isAddress(to)) return err("that is not a valid address");
+        tx(() => contract.offer(picked, to), "offered on");
+      });
+      if (cr.offeredTo !== ZERO) mk("Cancel the offer", "sm", () => tx(() => contract.cancelOffer(picked), "offer cancelled"));
+      mk("Return it to the depot", "ok", () => tx(() => contract.returnCrate(picked), "returned — the operator accepts it next"));
+    } else if (offeredToMe) {
+      z.innerHTML = `<div class="hint" style="margin-top:14px">You have been offered this crate. Your deposit goes in as the current holder's is released — escrow still holds exactly one.</div>`;
+      mk(`Take it on — ${E(fleet.deposit, 4)} BOT`, "go",
+        () => tx(() => contract.takeOver(picked, { value: fleet.deposit }), "crate taken on"));
+    } else {
+      z.innerHTML = `<div class="hint" style="margin-top:14px">Out with ${short(cr.holder)}. Only the holder can pass it on or bring it back.</div>`;
+    }
+    if (isOp) mk("Declare it lost", "bad",
+      () => tx(() => contract.declareLost(picked), "declared lost — deposit forfeited"), over);
+  } else if (st === RETURN_PENDING) {
+    if (isOp) {
+      mk("Accept the return", "ok", () => tx(() => contract.acceptReturn(picked), "return accepted — deposit released"));
+      mk("Write it off", "warn", () => tx(() => contract.writeOff(picked), "written off — holder refunded in full"));
+      z.innerHTML = `<div class="hint" style="margin-top:14px">A write-off retires the crate and still refunds the holder in full. A contract cannot inspect a crate, so it does not get to decide whose fault damage was — the usage fee is what covers wear.</div>`;
+    } else if (mine) {
+      const ok = await c.returnForceable(picked);
+      mk("Force the return", "warn", () => tx(() => contract.forceReturn(picked), "return forced — deposit released"), ok);
+      z.innerHTML = `<div class="hint" style="margin-top:14px">${ok
+        ? "The operator has not accepted this return in time, so you can take your deposit back yourself."
+        : "Waiting on the operator. If they never accept it, you can force the return after a week."}</div>`;
+    } else {
+      z.innerHTML = '<div class="hint" style="margin-top:14px">Returned and waiting on the operator.</div>';
+    }
+  } else {
+    z.innerHTML = `<div class="hint" style="margin-top:14px">${st === RETIRED
+      ? "Retired. It has either done its cycles or been written off, and will not go out again."
+      : "Lost. It went past its window and the deposit went to the operator."}</div>`;
+  }
+
+  if (acts.children.length) z.appendChild(acts);
+}
+
+async function drawOps() {
+  const c = reader(), z = $("opzone");
+  const isOp = account && fleet.operator.toLowerCase() === account.toLowerCase();
+  if (!isOp) {
+    z.innerHTML = '<div class="empty">You do not run this fleet.</div>';
+    return;
+  }
+  const u = await c.quoteUsageFee(fid);
+  z.innerHTML = `
+    <div class="f"><label>Add crates to the yard</label><input class="mono" id="addn" value="10" /></div>
+    <div class="acts" id="opacts"></div>
+    <div class="hint" style="margin-top:10px">Each checkout pays you ${E(u.toOperator, 5)} BOT, with ${E(u.protocolFee, 5)} going to the protocol.</div>`;
+  const acts = $("opacts");
+  const mk = (label, cls, fn, on = true) => {
+    const b = document.createElement("button");
+    b.className = "k " + cls;
+    b.textContent = label;
+    b.disabled = !on;
+    b.onclick = fn;
+    acts.appendChild(b);
+  };
+  mk("Add them", "go", () => {
+    const nn = parseInt($("addn").value || "0", 10);
+    if (!(nn > 0)) return err("how many crates?");
+    tx(() => contract.addCrates(fid, nn), `${nn} crates added`);
+  });
+  mk("Close the fleet", "sm", () => tx(() => contract.closeFleet(fid), "fleet closed to new checkouts"), fleet.open);
+}
+
+/* ----------------------------------------------------------------- writing */
+async function tx(fn, okMsg) {
+  if (!contract || CONTRACT_ADDRESS === ZERO) return err("connect a wallet, and set CONTRACT_ADDRESS in this file");
+  try {
+    say("sending…");
+    const t = await fn();
+    await t.wait();
+    say(okMsg);
+    await refresh();
+  } catch (e) { err(e); }
+}
+
+$("btn-connect").onclick = connect;
+$("btn-cash").onclick = () => tx(() => contract.withdraw(), "withdrawn");
+$("btn-openfleet").onclick = async () => {
+  const name = $("o-name").value.trim();
+  if (!name) return err("the fleet needs a name");
+  try {
+    const dep = ethers.parseEther($("o-dep").value || "0");
+    const use = ethers.parseEther($("o-use").value || "0");
+    const cyc = BigInt(parseInt($("o-cyc").value || "0", 10));
+    await tx(() => contract.openFleet(name, dep, use, BigInt($("o-win").value), cyc), "fleet opened");
+    $("o-name").value = "";
+  } catch (e) { err(e); }
+};
+
+/* ---- BOT Chain ecosystem footer: follows the NETWORK config above ---- */
+(function () {
+  var ex = document.getElementById("bc-explorer");
+  if (ex) ex.href = NETWORK.blockExplorerUrls[0];
+})();
+
+readOnly();
+refresh();
+if (CONTRACT_ADDRESS === ZERO) {
+  say("no contract set — paste the deployed address into CONTRACT_ADDRESS in this file", "err");
+}
+var walletBusy = false;
+if (window.ethereum) {
+  // Don't reload while we are mid-connect: switching the chain fires
+  // chainChanged, and reloading there is what made Connect need two clicks.
+  window.ethereum.on("accountsChanged", function () { if (!walletBusy) location.reload(); });
+  window.ethereum.on("chainChanged", function () { if (!walletBusy) location.reload(); });
+}
+// Already authorised and on the right chain? Show connected without a click.
+(async function reconnect() {
+  if (!window.ethereum) return;
+  try {
+    const accs = await window.ethereum.request({ method: "eth_accounts" });
+    if (!accs || !accs.length) return;
+    const chain = await window.ethereum.request({ method: "eth_chainId" });
+    if (String(chain).toLowerCase() !== NETWORK.chainId.toLowerCase()) return;
+    await connect();
+  } catch (e) { /* leave the Connect button as it was */ }
+})();
+</script>
+</body>
+</html>
